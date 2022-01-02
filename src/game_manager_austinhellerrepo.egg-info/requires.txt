@@ -1,0 +1,6 @@
+common-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Common
+game-server-manager-austinhellerrepo@ git+https://github.com/AustinHellerRepo/GameServerManager
+threading-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Threading
+socket-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Socket
+client-authentication-manager-austinhellerrepo@ git+https://github.com/AustinHellerRepo/ClientAuthenticationManager
+socket-queued-message-framework-austinhellerrepo@ git+https://github.com/AustinHellerRepo/SocketQueuedMessageFramework
