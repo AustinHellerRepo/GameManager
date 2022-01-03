@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 import webbrowser
 from austin_heller_repo.socket_queued_message_framework import ClientServerMessage, Structure, StructureStateEnum, ClientServerMessageTypeEnum, ClientMessengerFactory, StructureFactory, StructureInfluence, StructureTransitionException, ClientMessenger
 from austin_heller_repo.client_authentication_manager import OpenidAuthenticationRequestClientAuthenticationClientServerMessage, AuthenticationResponseClientAuthenticationClientServerMessage, UrlNavigationNeededResponseClientAuthenticationClientServerMessage, UnexpectedAuthenticationRequestClientAuthenticationClientServerMessage, UnexpectedOpenidAuthenticationResponseClientAuthenticationClientServerMessage
-from austin_heller_repo.threading import Semaphore
+from austin_heller_repo.threading import Semaphore, start_thread
 
 
 class GameManagerStructureStateEnum(StructureStateEnum):
@@ -19,11 +19,13 @@ class GameManagerStructureStateEnum(StructureStateEnum):
 
 
 class GameManagerClientServerMessageTypeEnum(ClientServerMessageTypeEnum):
-	UnexpectedGameManagerRequest = "unexpected_game_manager_request"
+	GameManagerError = "game_manager_error"
 	AuthenticateClientRequest = "authenticate_client_request"
 	UrlNavigationNeededResponse = "url_navigation_needed_response"
 	AuthenticateClientResponse = "authenticate_client_response"
-	AuthenticationExceptionResponse = "authentication_exception_response"
+	AuthenticationTimeoutError = "authentication_timeout_error"
+	ClientAlreadyAuthenticatedError = "client_already_authenticated_error"
+	ClientAuthenticationManagerError = "client_authentication_manager_error"
 
 
 class GameManagerClientServerMessage(ClientServerMessage, ABC):
@@ -38,7 +40,7 @@ class GameManagerClientServerMessage(ClientServerMessage, ABC):
 		return GameManagerClientServerMessageTypeEnum
 
 
-class UnexpectedGameManagerRequestGameManagerClientServerMessage(GameManagerClientServerMessage):
+class GameManagerErrorGameManagerClientServerMessage(GameManagerClientServerMessage):
 
 	def __init__(self, *, structure_state_name: str, client_server_message_json_string: str, destination_uuid: str):
 		super().__init__()
@@ -57,7 +59,7 @@ class UnexpectedGameManagerRequestGameManagerClientServerMessage(GameManagerClie
 
 	@classmethod
 	def get_client_server_message_type(cls) -> ClientServerMessageTypeEnum:
-		return GameManagerClientServerMessageTypeEnum.UnexpectedGameManagerRequest
+		return GameManagerClientServerMessageTypeEnum.GameManagerError
 
 	def to_json(self) -> Dict:
 		json_object = super().to_json()
@@ -110,7 +112,7 @@ class AuthenticateClientRequestGameManagerClientServerMessage(GameManagerClientS
 		return True
 
 	def get_structural_error_client_server_message_response(self, *, structure_transition_exception: StructureTransitionException, destination_uuid: str) -> ClientServerMessage:
-		return UnexpectedGameManagerRequestGameManagerClientServerMessage(
+		return GameManagerErrorGameManagerClientServerMessage(
 			structure_state_name=structure_transition_exception.get_structure_state().value,
 			client_server_message_json_string=json.dumps(structure_transition_exception.get_structure_influence().get_client_server_message().to_json()),
 			destination_uuid=destination_uuid
@@ -154,7 +156,7 @@ class UrlNavigationNeededResponseGameManagerClientServerMessage(GameManagerClien
 		return True
 
 	def get_structural_error_client_server_message_response(self, *, structure_transition_exception: StructureTransitionException, destination_uuid: str) -> ClientServerMessage:
-		return UnexpectedGameManagerRequestGameManagerClientServerMessage(
+		return GameManagerErrorGameManagerClientServerMessage(
 			structure_state_name=structure_transition_exception.get_structure_state().value,
 			client_server_message_json_string=json.dumps(structure_transition_exception.get_structure_influence().get_client_server_message().to_json()),
 			destination_uuid=destination_uuid
@@ -195,31 +197,95 @@ class AuthenticateClientResponseGameManagerClientServerMessage(GameManagerClient
 		return True
 
 	def get_structural_error_client_server_message_response(self, *, structure_transition_exception: StructureTransitionException, destination_uuid: str) -> ClientServerMessage:
-		return UnexpectedGameManagerRequestGameManagerClientServerMessage(
+		return GameManagerErrorGameManagerClientServerMessage(
 			structure_state_name=structure_transition_exception.get_structure_state().value,
 			client_server_message_json_string=json.dumps(structure_transition_exception.get_structure_influence().get_client_server_message().to_json()),
 			destination_uuid=destination_uuid
 		)
 
 
-class AuthenticationExceptionResponseGameManagerClientServerMessage(GameManagerClientServerMessage):
+class AuthenticationTimeoutErrorGameManagerClientServerMessage(GameManagerClientServerMessage):
 
-	def __init__(self, *, exception_message: str, destination_uuid: str):
+	def __init__(self, *, destination_uuid: str):
 		super().__init__()
 
-		self.__exception_message = exception_message
 		self.__destination_uuid = destination_uuid
-
-	def get_exception_message(self) -> str:
-		return self.__exception_message
 
 	@classmethod
 	def get_client_server_message_type(cls) -> ClientServerMessageTypeEnum:
-		return GameManagerClientServerMessageTypeEnum.AuthenticationExceptionResponse
+		return GameManagerClientServerMessageTypeEnum.AuthenticationTimeoutError
 
 	def to_json(self) -> Dict:
 		json_object = super().to_json()
-		json_object["exception_message"] = self.__exception_message
+		json_object["destination_uuid"] = self.__destination_uuid
+		return json_object
+
+	def is_response(self) -> bool:
+		return True
+
+	def get_destination_uuid(self) -> str:
+		return self.__destination_uuid
+
+	def is_structural_influence(self) -> bool:
+		return False
+
+	def is_ordered(self) -> bool:
+		return True
+
+	def get_structural_error_client_server_message_response(self, *, structure_transition_exception: StructureTransitionException, destination_uuid: str) -> ClientServerMessage:
+		return None
+
+
+class ClientAlreadyAuthenticatedErrorGameManagerClientServerMessage(GameManagerClientServerMessage):
+
+	def __init__(self, *, destination_uuid: str):
+		super().__init__()
+
+		self.__destination_uuid = destination_uuid
+
+	@classmethod
+	def get_client_server_message_type(cls) -> ClientServerMessageTypeEnum:
+		return GameManagerClientServerMessageTypeEnum.ClientAlreadyAuthenticatedError
+
+	def to_json(self) -> Dict:
+		json_object = super().to_json()
+		json_object["destination_uuid"] = self.__destination_uuid
+		return json_object
+
+	def is_response(self) -> bool:
+		return True
+
+	def get_destination_uuid(self) -> str:
+		return self.__destination_uuid
+
+	def is_structural_influence(self) -> bool:
+		return False
+
+	def is_ordered(self) -> bool:
+		return True
+
+	def get_structural_error_client_server_message_response(self, *, structure_transition_exception: StructureTransitionException, destination_uuid: str) -> ClientServerMessage:
+		return None
+
+
+class ClientAuthenticationManagerErrorGameManagerClientServerMessage(GameManagerClientServerMessage):
+
+	def __init__(self, *, message: str, destination_uuid: str):
+		super().__init__()
+
+		self.__message = message
+		self.__destination_uuid = destination_uuid
+
+	def get_message(self) -> str:
+		return self.__message
+
+	@classmethod
+	def get_client_server_message_type(cls) -> ClientServerMessageTypeEnum:
+		return GameManagerClientServerMessageTypeEnum.ClientAuthenticationManagerError
+
+	def to_json(self) -> Dict:
+		json_object = super().to_json()
+		json_object["message"] = self.__message
 		json_object["destination_uuid"] = self.__destination_uuid
 		return json_object
 
@@ -241,19 +307,22 @@ class AuthenticationExceptionResponseGameManagerClientServerMessage(GameManagerC
 
 class GameManagerStructure(Structure):
 
-	def __init__(self, *, client_authentication_client_messenger_factory: ClientMessengerFactory):
+	def __init__(self, *, client_authentication_client_messenger_factory: ClientMessengerFactory, authentication_timeout_seconds: float, is_debug: bool = False):
 		super().__init__(
 			states=GameManagerStructureStateEnum,
 			initial_state=GameManagerStructureStateEnum.Active  # TODO start UnderMaintenance
 		)
 
 		self.__client_authentication_client_messenger_factory = client_authentication_client_messenger_factory
+		self.__authentication_timeout_seconds = authentication_timeout_seconds
+		self.__is_debug = is_debug
 
-		# TODO add dispose method to Structure and to ServerMessenger (so that it can call dispose on internal structures)
 		self.__client_authentication_client_messenger = None  # type: ClientMessenger
 		self.__authentication_id_per_client_uuid = {}  # type: Dict[str, str]
 		self.__authentication_id_per_client_uuid_semaphore = Semaphore()
 		self.__found_exception = None  # type: Exception
+		self.__authentication_uuids = set()  # type: Set[str]
+		self.__authentication_uuids_semaphore = Semaphore()
 
 		self.add_transition(
 			client_server_message_type=GameManagerClientServerMessageTypeEnum.AuthenticateClientRequest,
@@ -278,31 +347,55 @@ class GameManagerStructure(Structure):
 	def __client_authentication_client_messenger_callback(self, client_server_message: ClientServerMessage):
 		print(f"{datetime.utcnow()}: GameManagerStructure: __client_authentication_client_messenger_callback: client_server_message: {client_server_message}")
 		if isinstance(client_server_message, UrlNavigationNeededResponseClientAuthenticationClientServerMessage):
-			external_client_id = client_server_message.get_external_client_id()
-			self.send_response(
-				client_server_message=UrlNavigationNeededResponseGameManagerClientServerMessage(
-					url=client_server_message.get_url(),
-					destination_uuid=external_client_id
+			external_metadata_json = client_server_message.get_external_metadata_json()
+			self.__authentication_uuids_semaphore.acquire()
+			if external_metadata_json["authentication_uuid"] in self.__authentication_uuids:
+				self.__authentication_uuids_semaphore.release()
+				self.send_response(
+					client_server_message=UrlNavigationNeededResponseGameManagerClientServerMessage(
+						url=client_server_message.get_url(),
+						destination_uuid=external_metadata_json["client_uuid"]
+					)
 				)
-			)
+			else:
+				if self.__is_debug:
+					print(f"{datetime.utcnow()}: GameManagerStructure: __client_authentication_client_messenger_callback: UrlNavigationNeededResponseClientAuthenticationClientServerMessage: authentication_uuid missing")
+				self.__authentication_uuids_semaphore.release()
 		elif isinstance(client_server_message, AuthenticationResponseClientAuthenticationClientServerMessage):
-			external_client_id = client_server_message.get_external_client_id()
-			if client_server_message.is_successful():
+			external_metadata_json = client_server_message.get_external_metadata_json()
+			self.__authentication_uuids_semaphore.acquire()
+			if external_metadata_json["authentication_uuid"] in self.__authentication_uuids:
+				self.__authentication_uuids.remove(external_metadata_json["authentication_uuid"])
+				self.__authentication_uuids_semaphore.release()
+
 				self.__authentication_id_per_client_uuid_semaphore.acquire()
-				self.__authentication_id_per_client_uuid[external_client_id] = client_server_message.get_authentication_id()
-				self.__authentication_id_per_client_uuid_semaphore.release()
-			self.send_response(
-				client_server_message=AuthenticateClientResponseGameManagerClientServerMessage(
-					is_successful=client_server_message.is_successful(),
-					destination_uuid=external_client_id
-				)
-			)
+				if external_metadata_json["client_uuid"] in self.__authentication_id_per_client_uuid:
+					self.__authentication_id_per_client_uuid_semaphore.release()
+					self.send_response(
+						client_server_message=ClientAlreadyAuthenticatedErrorGameManagerClientServerMessage(
+							destination_uuid=external_metadata_json["client_uuid"]
+						)
+					)
+				else:
+					if client_server_message.is_successful():
+						self.__authentication_id_per_client_uuid[external_metadata_json["client_uuid"]] = client_server_message.get_authentication_id()
+					self.__authentication_id_per_client_uuid_semaphore.release()
+					self.send_response(
+						client_server_message=AuthenticateClientResponseGameManagerClientServerMessage(
+							is_successful=client_server_message.is_successful(),
+							destination_uuid=external_metadata_json["client_uuid"]
+						)
+					)
+			else:
+				if self.__is_debug:
+					print(f"{datetime.utcnow()}: GameManagerStructure: __client_authentication_client_messenger_callback: AuthenticationResponseClientAuthenticationClientServerMessage: authentication_uuid missing")
+				self.__authentication_uuids_semaphore.release()
 		elif isinstance(client_server_message, UnexpectedAuthenticationRequestClientAuthenticationClientServerMessage):
-			external_client_id = client_server_message.get_external_client_id()
+			external_metadata_json = client_server_message.get_external_metadata_json()
 			self.send_response(
-				client_server_message=AuthenticationExceptionResponseGameManagerClientServerMessage(
-					exception_message=f"Unexpected authentication request {client_server_message.get_client_server_message().__class__.get_client_server_message_type()} while in state {client_server_message.get_structure_state().value}",
-					destination_uuid=external_client_id
+				client_server_message=ClientAuthenticationManagerErrorGameManagerClientServerMessage(
+					message=f"Unexpected authentication request {client_server_message.get_client_server_message().__class__.get_client_server_message_type()} while in state {client_server_message.get_structure_state().value}",
+					destination_uuid=external_metadata_json["client_uuid"]
 				)
 			)
 		elif isinstance(client_server_message, UnexpectedOpenidAuthenticationResponseClientAuthenticationClientServerMessage):
@@ -319,13 +412,57 @@ class GameManagerStructure(Structure):
 
 		openid_authentication_request = structure_influence.get_client_server_message()  # type: AuthenticateClientRequestGameManagerClientServerMessage
 
-		external_client_id = structure_influence.get_source_uuid()
+		client_uuid = structure_influence.get_source_uuid()
 
-		self.__client_authentication_client_messenger.send_to_server(
-			request_client_server_message=OpenidAuthenticationRequestClientAuthenticationClientServerMessage(
-				external_client_id=external_client_id
+		if client_uuid in self.__authentication_id_per_client_uuid:
+			self.send_response(
+				client_server_message=ClientAlreadyAuthenticatedErrorGameManagerClientServerMessage(
+					destination_uuid=client_uuid
+				)
 			)
-		)
+		else:
+			external_metadata_json = {
+				"client_uuid": client_uuid,
+				"authentication_uuid": str(uuid.uuid4())
+			}
+			self.__authentication_uuids_semaphore.acquire()
+			self.__authentication_uuids.add(external_metadata_json["authentication_uuid"])
+			self.__authentication_uuids_semaphore.release()
+			self.__client_authentication_client_messenger.send_to_server(
+				request_client_server_message=OpenidAuthenticationRequestClientAuthenticationClientServerMessage(
+					external_metadata_json=external_metadata_json
+				)
+			)
+
+			def timeout_thread():
+				nonlocal external_metadata_json
+
+				if self.__is_debug:
+					print(f"GameManagerStructure: __authenticate_client_request_received: timeout_thread: time.sleep: start")
+				time.sleep(self.__authentication_timeout_seconds)
+				if self.__is_debug:
+					print(f"GameManagerStructure: __authenticate_client_request_received: timeout_thread: time.sleep: end")
+
+				self.__authentication_uuids_semaphore.acquire()
+				if external_metadata_json["authentication_uuid"] in self.__authentication_uuids:
+					is_timeout = True
+					self.__authentication_uuids.remove(external_metadata_json["authentication_uuid"])
+				else:
+					is_timeout = False
+				self.__authentication_uuids_semaphore.release()
+
+				if is_timeout:
+					if self.__is_debug:
+						print(f"GameManagerStructure: __authenticate_client_request_received: timeout_thread: send_response: start")
+					self.send_response(
+						client_server_message=AuthenticationTimeoutErrorGameManagerClientServerMessage(
+							destination_uuid=external_metadata_json["client_uuid"]
+						)
+					)
+					if self.__is_debug:
+						print(f"GameManagerStructure: __authenticate_client_request_received: timeout_thread: send_response: end")
+
+			start_thread(timeout_thread)
 
 	def dispose(self):
 		self.__client_authentication_client_messenger.dispose()
@@ -333,11 +470,15 @@ class GameManagerStructure(Structure):
 
 class GameManagerStructureFactory(StructureFactory):
 
-	def __init__(self, *, client_authentication_client_messenger_factory: ClientMessengerFactory):
+	def __init__(self, *, client_authentication_client_messenger_factory: ClientMessengerFactory, authentication_timeout_seconds: float, is_debug: bool = False):
 
 		self.__client_authentication_client_messenger_factory = client_authentication_client_messenger_factory
+		self.__authentication_timeout_seconds = authentication_timeout_seconds
+		self.__is_debug = is_debug
 
 	def get_structure(self) -> Structure:
 		return GameManagerStructure(
-			client_authentication_client_messenger_factory=self.__client_authentication_client_messenger_factory
+			client_authentication_client_messenger_factory=self.__client_authentication_client_messenger_factory,
+			authentication_timeout_seconds=self.__authentication_timeout_seconds,
+			is_debug=self.__is_debug
 		)

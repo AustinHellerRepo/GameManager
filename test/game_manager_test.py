@@ -5,12 +5,20 @@ import os
 import time
 from datetime import datetime
 import uuid
-from src.austin_heller_repo.game_manager import GameManagerClientServerMessage, GameManagerStructureFactory, AuthenticateClientRequestGameManagerClientServerMessage, AuthenticateClientResponseGameManagerClientServerMessage, UrlNavigationNeededResponseGameManagerClientServerMessage, GameManagerClientServerMessageTypeEnum
+from src.austin_heller_repo.game_manager import GameManagerClientServerMessage, GameManagerStructureFactory, AuthenticateClientRequestGameManagerClientServerMessage, AuthenticateClientResponseGameManagerClientServerMessage, UrlNavigationNeededResponseGameManagerClientServerMessage, GameManagerClientServerMessageTypeEnum, ClientAlreadyAuthenticatedErrorGameManagerClientServerMessage
 from austin_heller_repo.client_authentication_manager import ClientAuthenticationClientServerMessage
 from austin_heller_repo.socket_queued_message_framework import ClientMessengerFactory, ServerMessengerFactory, ClientServerMessage
 from austin_heller_repo.socket import ClientSocketFactory, ServerSocketFactory
 from austin_heller_repo.common import HostPointer
 from austin_heller_repo.threading import SingletonMemorySequentialQueueFactory, Semaphore, start_thread
+
+
+def get_default_host_port() -> int:
+	return 35125
+
+
+def get_default_client_authentication_port() -> int:
+	return 35124  # NOTE this is what the client_authentication_manager_service is listening on
 
 
 def get_default_client_messenger_factory() -> ClientMessengerFactory:
@@ -20,7 +28,7 @@ def get_default_client_messenger_factory() -> ClientMessengerFactory:
 		),
 		server_host_pointer=HostPointer(
 			host_address="localhost",
-			host_port=35272
+			host_port=get_default_host_port()
 		),
 		client_server_message_class=GameManagerClientServerMessage,
 		is_debug=True
@@ -37,7 +45,7 @@ def get_default_server_messenger_factory() -> ServerMessengerFactory:
 		sequential_queue_factory=SingletonMemorySequentialQueueFactory(),
 		local_host_pointer=HostPointer(
 			host_address="localhost",
-			host_port=35272
+			host_port=get_default_host_port()
 		),
 		client_server_message_class=GameManagerClientServerMessage,
 		structure_factory=GameManagerStructureFactory(
@@ -47,11 +55,12 @@ def get_default_server_messenger_factory() -> ServerMessengerFactory:
 				),
 				server_host_pointer=HostPointer(
 					host_address="localhost",
-					host_port=35124  # NOTE this is what the client_authentication_manager_service is listening on
+					host_port=get_default_client_authentication_port()
 				),
 				client_server_message_class=ClientAuthenticationClientServerMessage,
 				is_debug=True
-			)
+			),
+			authentication_timeout_seconds=10
 		),
 		is_debug=True
 	)
@@ -87,7 +96,7 @@ class GameManagerTest(unittest.TestCase):
 
 		with self.assertRaises(KeyError):
 			client_server_message_class = ClientAuthenticationClientServerMessage.get_client_server_message_class(
-				client_server_message_type=GameManagerClientServerMessageTypeEnum.UnexpectedGameManagerRequest
+				client_server_message_type=GameManagerClientServerMessageTypeEnum.GameManagerError
 			)
 
 			print(f"{datetime.utcnow()}: test: client_server_message_class: {client_server_message_class}")
@@ -179,9 +188,13 @@ class GameManagerTest(unittest.TestCase):
 
 	def test_multiple_client_authentication_sequential(self):
 
+		time.sleep(1)
+
 		server_messenger = get_default_server_messenger_factory().get_server_messenger()
 
 		server_messenger.start_receiving_from_clients()
+
+		time.sleep(1)
 
 		client_messenger = get_default_client_messenger_factory().get_client_messenger()
 
@@ -206,11 +219,7 @@ class GameManagerTest(unittest.TestCase):
 				authentication_response_client_server_message = client_server_message
 				blocking_semaphore.release()
 			elif callback_total == 3:
-				self.assertIsInstance(client_server_message, UrlNavigationNeededResponseGameManagerClientServerMessage)
-				client_server_message.navigate_to_url()
-			elif callback_total == 4:
-				self.assertIsInstance(client_server_message, AuthenticateClientResponseGameManagerClientServerMessage)
-				authentication_response_client_server_message = client_server_message
+				self.assertIsInstance(client_server_message, ClientAlreadyAuthenticatedErrorGameManagerClientServerMessage)
 				blocking_semaphore.release()
 			else:
 				raise Exception(f"Unexpected callback total: {callback_total}")
